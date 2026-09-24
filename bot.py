@@ -121,7 +121,12 @@ class TicketView(View):
 @bot.event
 async def on_ready():
     print(f"Bot {bot.user} online!")
-
+    await bot.change_presence(
+        activity=discord.Activity(
+            type=discord.ActivityType.watching,
+            name="NexStudio"
+        )
+    )
 @bot.command()
 async def say(ctx, *, text):
     if ctx.author.id != OWNER_ID:
