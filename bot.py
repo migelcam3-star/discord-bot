@@ -1,7 +1,10 @@
 import discord
 from discord.ext import commands
 from discord.ui import View, Button, Modal, TextInput, Select
-import os, time, json, asyncio
+import os
+import time
+import json
+import asyncio
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -16,13 +19,21 @@ TICKET_CHANNEL_ID = 1534939950061977661
 PING_ROLE_ID = 1541525446959702146
 
 STAFF_ROLES = [
-    1540009967040602232, 1534841235167117352, 1549116304659710115,
-    1541494617290309793, 1550202959898353836, 1550202161575624885,
+    1540009967040602232,
+    1534841235167117352,
+    1549116304659710115,
+    1541494617290309793,
+    1550202959898353836,
+    1550202161575624885,
     1536095886793252874
 ]
+
 ARCHIVE_ROLES = [
-    1541494617290309793, 1550202959898353836, 1550202161575624885,
-    1551180719265681418, 1536095886793252874
+    1541494617290309793,
+    1550202959898353836,
+    1550202161575624885,
+    1551180719265681418,
+    1536095886793252874
 ]
 
 ARCHIVE_FILE = "tickets_archive.json"
@@ -35,8 +46,11 @@ def load_archive():
         return []
 
 def save_archive(data):
-    with open(ARCHIVE_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    try:
+        with open(ARCHIVE_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except:
+        pass
 
 def is_staff(member):
     if member.id == OWNER_ID:
@@ -66,11 +80,12 @@ class TicketModal(Modal, title="Подать заявку"):
         if role:
             overwrites[role] = discord.PermissionOverwrite(view_channel=True, send_messages=True)
 
-        channel_name = f"тикет-{interaction.user.id}-{int(time.time())}"
+        channel_name = f"ticket-{interaction.user.id}-{int(time.time())}"
+
         try:
             channel = await interaction.guild.create_text_channel(name=channel_name, overwrites=overwrites)
         except Exception as e:
-            return await interaction.followup.send(f"❌ Ошибка канала: {e}", ephemeral=True)
+            return await interaction.followup.send(f"❌ Ошибка создания канала: {e}", ephemeral=True)
 
         emb = discord.Embed(title="📩 Новая жалоба", color=0xED4245)
         emb.add_field(name="От кого", value=self.your_name.value, inline=False)
@@ -95,79 +110,7 @@ class TicketModal(Modal, title="Подать заявку"):
 
         await interaction.followup.send(f"✅ Жалоба отправлена! Тикет: {channel.mention}", ephemeral=True)
 
-class TicketControlView(View):
-    def init(self):
-        super().init(timeout=None)
-
-    @discord.ui.button(label="Взять на рассмотрение", style=discord.ButtonStyle.primary, emoji="✋")
-    async def claim(self, interaction: discord.Interaction, button: Button):
-        if not is_staff(interaction.user):
-            return await interaction.response.send_message("Нет прав", ephemeral=True)
-        emb = interaction.message.embeds[0]
-        emb.color = 0xFEE75C
-        emb.title = "✋ На рассмотрении"
-        # обновляем статус
-        for i, f in enumerate(emb.fields):
-            if f.name == "Статус":
-                emb.set_field_at(i, name="Статус", value=f"Взял: {interaction.user.mention}", inline=False)
-                break
-        else:
-            emb.add_field(name="Статус", value=f"Взял: {interaction.user.mention}", inline=False)
-        await interaction.message.edit(embed=emb)
-        await interaction.response.send_message(f"Тикет взял: {interaction.user.mention}")
-
-    @discord.ui.button(label="Принять", style=discord.ButtonStyle.success, emoji="✅")
-    async def accept(self, interaction: discord.Interaction, button: Button):
-        if not is_staff(interaction.user):
-            return await interaction.response.send_message("Нет прав", ephemeral=True)
-        emb = interaction.message.embeds[0]
-        emb.color = 0x57F287
-        emb.title = "✅ Жалоба принята"
-        await interaction.message.edit(embed=emb, view=None)
-        await interaction.response.send_message(f"Принято: {interaction.user.mention}")
-        await asyncio.sleep(5)
-        try:
-            await interaction.channel.delete()
-        except:
-            pass
-
-    @discord.ui.button(label="Отклонить", style=discord.ButtonStyle.danger, emoji="❌")
-    async def reject(self, interaction: discord.Interaction, button: Button):
-        if not is_staff(interaction.user):
-            return await interaction.response.send_message("Нет прав", ephemeral=True)
-        emb = interaction.message.embeds[0]
-        emb.color = 0xED4245
-        emb.title = "❌ Жалоба отклонена"
-        await interaction.message.edit(embed=emb, view=None)
-        await interaction.response.send_message(f"Отклонено: {interaction.user.mention}")
-        await asyncio.sleep(5)
-        try:
-            await interaction.channel.delete()
-        except:
-            pass
-
-class ArchiveSelect(Select):
-    def init(self, options):
-        super().init(placeholder="Выберите тикет из архива...", options=options, min_values=1, max_values=1)
-
-    async def callback(self, interaction: discord.Interaction):
-        await interaction.response.send_message(f"Ссылка на тикет: {self.values[0]}", ephemeral=True)
-
-class ArchiveView(View):
-    def init(self, options):
-        super().init(timeout=60)
-        if options:
-            self.add_item(ArchiveSelect(options))
-
-class TicketView(View):
-    def init(self):
-        super().init(timeout=None)
-
-    @discord.ui.button(label="Пожаловаться", style=discord.ButtonStyle.danger, emoji="📩")
-    async def complain(self, interaction: discord.Interaction, button: Button):
-        await interaction.response.send_modal(TicketModal())
-
-    @discord.ui.button(label="Архив тикетов", style=discord.ButtonStyle.secondary, emoji="📁")
+@discord.ui.button(label="Архив тикетов", style=discord.ButtonStyle.secondary, emoji="📁")
     async def archive(self, interaction: discord.Interaction, button: Button):
         if not can_archive(interaction.user):
             return await interaction.response.send_message("Нет прав на архив", ephemeral=True)
@@ -177,11 +120,20 @@ class TicketView(View):
             return await interaction.response.send_message("Архив пуст", ephemeral=True)
 
         options = []
-        for i, t in enumerate(data[:25]):
-            label = f"{t.get('user', '?')[:40]} — {t.get('reason', '')[:40]}"
-            options.append(discord.SelectOption(label=label[:100], value=t.get("url", "нет ссылки"), description=t.get("name", "")[:50]))
+        for t in data[:25]:
+            label = f"{t.get('user', '?')[:30]} — {t.get('reason', '')[:40]}"
+            options.append(discord.SelectOption(
+                label=label[:100],
+                value=t.get("url", "нет"),
+                description=str(t.get("name", ""))[:50]
+            ))
 
-        await interaction.response.send_message("📁 Архив тикетов (только просмотр):", view=ArchiveView(options), ephemeral=True)
+        emb = discord.Embed(
+            title="📁 Архив тикетов",
+            description="Выберите тикет, чтобы получить ссылку.\nПисать нельзя — только просмотр.",
+            color=0x5865F2
+        )
+        await interaction.response.send_message(embed=emb, view=ArchiveView(options), ephemeral=True)
 
 @bot.event
 async def on_ready():
