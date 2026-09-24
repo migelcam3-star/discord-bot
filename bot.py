@@ -11,7 +11,7 @@ load_dotenv()
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
-bot = commands.Bot(command_prefix='!', intents=intents)
+bot = commands.Bot(command_prefix="!", intents=intents)
 
 OWNER_ID = 1464526568293531763
 TICKET_CHANNEL_ID = 1534939950061977661
@@ -24,7 +24,7 @@ STAFF_ROLES = [
     1541494617290309793,
     1550202959898353836,
     1550202161575624885,
-    1536095886793252874
+    1536095886793252874,
 ]
 
 def is_staff(member):
@@ -40,23 +40,19 @@ class TicketModal(Modal, title="Подать заявку"):
 
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
-
         overwrites = {
             interaction.guild.default_role: discord.PermissionOverwrite(view_channel=False),
             interaction.user: discord.PermissionOverwrite(view_channel=True, send_messages=True),
-            interaction.guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True, manage_channels=True)
+            interaction.guild.me: discord.PermissionOverwrite(view_channel=True, send_messages=True, manage_channels=True),
         }
         role = interaction.guild.get_role(PING_ROLE_ID)
         if role:
             overwrites[role] = discord.PermissionOverwrite(view_channel=True, send_messages=True)
-
         channel_name = f"ticket-{interaction.user.id}-{int(time.time())}"
-
         try:
             channel = await interaction.guild.create_text_channel(name=channel_name, overwrites=overwrites)
         except Exception as e:
             return await interaction.followup.send(f"Ошибка: {e}", ephemeral=True)
-
         emb = discord.Embed(title="Новая жалоба", color=0xED4245)
         emb.add_field(name="От кого", value=self.your_name.value, inline=False)
         emb.add_field(name="Нарушитель", value=self.target_name.value, inline=False)
@@ -65,9 +61,8 @@ class TicketModal(Modal, title="Подать заявку"):
         emb.add_field(name="Пользователь", value=interaction.user.mention, inline=False)
         emb.add_field(name="Статус", value="Ожидает", inline=False)
         emb.set_footer(text=f"ID: {interaction.user.id}")
-
         await channel.send(content=f"<@&{PING_ROLE_ID}>", embed=emb, view=TicketControlView())
-        await interaction.followup.send(f"Жалоба отправлена! Тикет: {channel.mention}", ephemeral=True)\
+        await interaction.followup.send(f"Жалоба отправлена! Тикет: {channel.mention}", ephemeral=True)
 class TicketControlView(View):
     def init(self):
         super().init(timeout=None)
@@ -152,7 +147,7 @@ async def ticket(ctx):
             "Все обращения рассматриваются администрацией в порядке очереди. "
             "Просим использовать систему тикетов только по назначению и не создавать обращения без причины."
         ),
-        color=0x5865F2
+        color=0x5865F2,
     )
     emb.set_footer(text="Система жалоб")
     await channel.send(embed=emb, view=TicketView())
