@@ -34,10 +34,13 @@ ticket_times = defaultdict(list)
 def is_staff(member):
     if member.id == OWNER_ID:
         return True
-    return any(r.id in STAFF_ROLES for r in member.roles)
+    return any(role.id in STAFF_ROLES for role in member.roles)
 
 def is_muted(member):
-    return member.timed_out_until is not None and member.timed_out_until > discord.utils.utcnow()
+    try:
+        return member.timed_out_until is not None and member.timed_out_until > discord.utils.utcnow()
+    except Exception:
+        return False
 
 def check_spam(user_id):
     now = time.time()
@@ -47,7 +50,6 @@ def check_spam(user_id):
         return True
     ticket_times[user_id].append(now)
     return False
-
 class TicketModal(Modal, title="Подать жалобу"):
     your_name = TextInput(label="Ваш юзернейм", placeholder="Пример: mrmigelll", required=True, max_length=100)
     target_name = TextInput(label="Юзернейм нарушителя", placeholder="Пример: denis014883", required=True, max_length=100)
@@ -64,7 +66,7 @@ class TicketModal(Modal, title="Подать жалобу"):
             try:
                 await interaction.user.timeout(timedelta(minutes=30), reason="Спам тикетами")
             except Exception as e:
-                print(f"timeout error: {e}")
+                print(f"Mute error: {e}")
             return await interaction.followup.send("Слишком много тикетов. Мьют на 30 минут.", ephemeral=True)
 
         overwrites = {
@@ -80,7 +82,8 @@ class TicketModal(Modal, title="Подать жалобу"):
         try:
             channel = await interaction.guild.create_text_channel(name=channel_name, overwrites=overwrites)
         except Exception as e:
-            return await interaction.followup.send(f"Ошибка: {e}", ephemeral=True)
+            print(f"Channel error: {e}")
+            return await interaction.followup.send(f"Ошибка создания канала: {e}", ephemeral=True)
 
         emb = discord.Embed(title="Новая жалоба", color=0xED4245)
         emb.add_field(name="От кого", value=self.your_name.value, inline=False)
@@ -93,7 +96,6 @@ class TicketModal(Modal, title="Подать жалобу"):
 
         await channel.send(content=f"<@&{PING_ROLE_ID}>", embed=emb, view=TicketControlView())
         await interaction.followup.send(f"Жалоба отправлена: {channel.mention}", ephemeral=True)
-
 class TicketControlView(View):
     def init(self):
         super().init(timeout=None)
@@ -105,8 +107,8 @@ class TicketControlView(View):
         emb = interaction.message.embeds[0]
         emb.color = 0xFEE75C
         emb.title = "На рассмотрении"
-        for i, f in enumerate(emb.fields):
-            if f.name == "Статус":
+        for i, field in enumerate(emb.fields):
+            if field.name == "Статус":
                 emb.set_field_at(i, name="Статус", value=f"Взял: {interaction.user.mention}", inline=False)
                 break
         await interaction.message.edit(embed=emb)
@@ -124,7 +126,7 @@ class TicketControlView(View):
         await asyncio.sleep(5)
         try:
             await interaction.channel.delete()
-        except:
+        except Exception:
             pass
 
     @discord.ui.button(label="Отклонить", style=discord.ButtonStyle.danger, emoji="❌")
@@ -139,7 +141,7 @@ class TicketControlView(View):
         await asyncio.sleep(5)
         try:
             await interaction.channel.delete()
-        except:
+        except Exception:
             pass
 
 class TicketView(View):
@@ -150,7 +152,7 @@ class TicketView(View):
     async def complain(self, interaction: discord.Interaction, button: Button):
         if is_muted(interaction.user):
             return await interaction.response.send_message(
-                "📩 Подать жалобу\nВы в мьюте и не можете подать жалобу.",
+                "Вы в мьюте и не можете подать жалобу.",
                 ephemeral=True
             )
         await interaction.response.send_modal(TicketModal())
@@ -170,7 +172,7 @@ async def say(ctx, *, text):
         return
     try:
         await ctx.message.delete()
-    except:
+    except Exception:
         pass
     await ctx.send(text)
 
