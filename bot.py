@@ -188,6 +188,7 @@ async def on_member_join(member):
                     await blog(member.guild, f"❌ Не забанил добавившего: {e}")
         return
 
+    # приветствие в ЛС
     try:
         emb = discord.Embed(
             title="👋 Добро пожаловать в Nexora Studio!",
@@ -200,12 +201,8 @@ async def on_member_join(member):
             ),
             color=0x5865F2,
         )
-        emb.set_footer(text="Nexora Studio")
-        ch = member.guild.system_channel
-        if ch is None:
-            ch = bot.get_channel(TICKET_CHANNEL_ID)
-        if ch is not None:
-            await ch.send(content=member.mention, embed=emb)
+        emb.set_footer(text=f"Nexora Studio • {member.guild.name}")
+        await member.send(embed=emb)
     except Exception:
         pass
 
@@ -315,7 +312,6 @@ async def on_message(message):
     text = message.content or ""
     low = text.lower()
 
-    # @everyone / @here
     if message.mention_everyone or EVERYONE_RE.search(text):
         try:
             await message.delete()
@@ -331,7 +327,6 @@ async def on_message(message):
         await blog(message.guild, f"📣 Пинг everyone — {message.author.mention}")
         return
 
-    # запрещённые слова
     if any(w in low for w in BANNED_WORDS):
         try:
             await message.delete()
@@ -348,7 +343,6 @@ async def on_message(message):
         await blog(message.guild, f"🚫 Запрещённое слово — {message.author.mention}")
         return
 
-    # инвайты и файлы
     if INVITE_RE.search(text) or message.attachments:
         try:
             await message.delete()
@@ -367,7 +361,6 @@ async def on_message(message):
             pass
         return
 
-    # спам
     now = time.time()
     uid = message.author.id
     msg_spam[uid] = [t for t in msg_spam[uid] if now - t < SPAM_WINDOW]
@@ -519,5 +512,5 @@ async def say(ctx, *, text):
 
 token = os.getenv("DISCORD_TOKEN")
 if not token:
-    raise RuntimeError("DISCORD_TOKEN не найден в .env")
+    raise RuntimeError("DISCORD_TOKEN не найден")
 bot.run(token)
