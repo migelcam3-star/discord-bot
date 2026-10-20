@@ -55,6 +55,12 @@ PERM_BAN_IDS = {
 WHITELIST_BOTS = set()
 
 BANNED_WORDS = ["ленвилль", "смелдар", "orbix studio"]
+NSFW_WORDS = [
+    "хуй", "хуя", "хуе", "пизд", "ебан", "ебат", "ебл", "бляд", "сука",
+    "мудил", "дроч", "член", "вагин", "секс", "порн", "fuck", "shit",
+    "bitch", "cock", "dick", "pussy",
+]
+
 INVITE_RE = re.compile(r"(discord\.gg/|discord\.com/invite/|discordapp\.com/invite/)[^\s]+", re.I)
 EVERYONE_RE = re.compile(r"@(everyone|here)", re.I)
 
@@ -64,11 +70,11 @@ SUSPICIOUS_BOT_PATTERNS = [
     r"server.?nuke", r"raidbot", r"spam.?bot",
 ]
 
-CHANNEL_DELETE_LIMIT, CHANNEL_DELETE_WINDOW = 3, 12
+CHANNEL_DELETE_LIMIT, CHANNEL_DELETE_WINDOW = 2, 1
 ROLE_DELETE_LIMIT, ROLE_DELETE_WINDOW = 3, 12
 MASS_BAN_LIMIT, MASS_BAN_WINDOW = 3, 15
 SPAM_LIMIT, SPAM_WINDOW, SPAM_MUTE_MIN = 6, 8, 15
-WEBHOOK_EVERYONE_LIMIT, WEBHOOK_WINDOW = 2, 10
+WEBHOOK_EVERYONE_LIMIT, WEBHOOK_WINDOW = 2, 1
 # ===========================================================
 
 channel_deletes = defaultdict(list)
@@ -154,6 +160,10 @@ async def on_ready():
     )
 
 @bot.event
+async def on_guild_remove(guild):
+    await blog(guild, f"⚠️ Бота удалили с сервера **{guild.name}** (`{guild.id}`)", 0xFEE75C)
+
+@bot.event
 async def on_member_join(member):
     if member.id in PERM_BAN_IDS:
         await perm_ban(member.guild, member.id, "PERM BAN list (join)")
@@ -188,7 +198,6 @@ async def on_member_join(member):
                     await blog(member.guild, f"❌ Не забанил добавившего: {e}")
         return
 
-    # приветствие в ЛС
     try:
         emb = discord.Embed(
             title="👋 Добро пожаловать в Nexora Studio!",
@@ -230,7 +239,7 @@ async def on_guild_channel_delete(channel):
     await blog(channel.guild, f"🗑️ Канал **#{channel.name}** удалён — {m.mention}")
     if len(channel_deletes[m.id]) >= CHANNEL_DELETE_LIMIT:
         try:
-            await m.ban(reason="снос каналов", delete_message_seconds=0)
+            await m.ban(reason="снос каналов (2/1с)", delete_message_seconds=0)
             await blog(channel.guild, f"⛔ Бан {m.mention} — снос каналов")
         except Exception:
             pass
@@ -278,25 +287,46 @@ async def on_message(message):
 
     # ----- вебхуки -----
     if message.webhook_id:
-        content_l = (message.content or "").lower()
-        has_ping = message.mention_everyone or bool(EVERYONE_RE.search(message.content or ""))
+        content = message.content or ""
+        content_l = content.lower()
+        has_ping = message.mention_everyone or bool(EVERYONE_RE.search(content))
         has_len = "ленвилль" in content_l
-        if has_ping or has_len:
-            wid = message.webhook_id
-            now = time.time()
+        has_nsfw = any(w in content_l for w in NSFW_WORDS)
+        wid = message.webhook_id
+        now = time.time()
+
+        instant = has_ping and (has_nsfw or has_len)
+
+        if has_ping:
             webhook_hits[wid] = [t for t in webhook_hits[wid] if now - t < WEBHOOK_WINDOW]
             webhook_hits[wid].append(now)
-            if has_len or len(webhook_hits[wid]) >= WEBHOOK_EVERYONE_LIMIT:
+
+        spam_everyone = has_ping and len(webhook_hits[wid]) >= WEBHOOK_EVERYONE_LIMIT
+
+        if instant or spam_everyone or has_len:
+            try:
+                await message.delete()
+            except Exception:
+                pass
+            try:
+                wh = await message.channel.fetch_webhook(wid)
+                await wh.delete(reason="Nexora: webhook raid")
+            except Exception:
+                pass
+            if spam_everyone:
                 try:
-                    await message.delete()
+                    for wh in await message.channel.webhooks():
+                        try:
+                            await wh.delete(reason="Nexora: mass everyone")
+                        except Exception:
+                            pass
                 except Exception:
                     pass
-                try:
-                    wh = await message.channel.fetch_webhook(wid)
-                    await wh.delete(reason="Nexora: webhook raid")
-                    await blog(message.guild, f"💀 Вебхук удалён в #{message.channel.name}")
-                except Exception as e:
-                    await blog(message.guild, f"❌ webhook delete: {e}")
+            await blog(
+                message.guild,
+                f"💀 Вебхук(и) сняты в #{message.channel.name}\n"
+                f"ping={has_ping} nsfw={has_nsfw} lenvill={has_len} mass={spam_everyone}",
+            )
         return
 
     if message.author.bot:
