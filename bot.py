@@ -52,7 +52,9 @@ PERM_BAN_IDS = {
     1549017207084949554,
 }
 
-WHITELIST_BOTS = set()
+WHITELIST_BOTS = {
+    310848622642069504,  # JuniperBot
+}
 
 BANNED_WORDS = ["ленвилль", "смелдар", "orbix studio"]
 NSFW_WORDS = [
@@ -181,7 +183,7 @@ async def on_member_join(member):
         bad, why = suspicious_bot(member)
         await blog(
             member.guild,
-            f"🤖 Бот **{member}** (`{member.id}`)\nДобавил: {adder}\nСтатус: {why}",
+            f"🤖 Бот **{member}** (`{member.id}`)\nДобавил: {adder}\nСтатус: {why if bad else 'OK (whitelist)'}",
             0xED4245 if bad else 0x57F287,
         )
         if bad:
@@ -285,7 +287,6 @@ async def on_message(message):
     if message.guild is None:
         return await bot.process_commands(message)
 
-    # ----- вебхуки -----
     if message.webhook_id:
         content = message.content or ""
         content_l = content.lower()
@@ -409,7 +410,6 @@ async def on_message(message):
 
     await bot.process_commands(message)
 
-# ======================== ТИКЕТЫ ========================
 class TicketModal(Modal, title="Подать жалобу"):
     your_name = TextInput(label="Ваш юзернейм", required=True, max_length=100)
     target_name = TextInput(label="Юзернейм нарушителя", required=True, max_length=100)
