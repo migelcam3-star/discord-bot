@@ -80,7 +80,7 @@ SUSPICIOUS_BOT_PATTERNS = [
 CHANNEL_DELETE_LIMIT, CHANNEL_DELETE_WINDOW = 2, 1
 ROLE_DELETE_LIMIT, ROLE_DELETE_WINDOW = 3, 12
 MASS_BAN_LIMIT, MASS_BAN_WINDOW = 3, 15
-SPAM_LIMIT, SPAM_WINDOW, SPAM_MUTE_MIN = 6, 8, 15
+SPAM_LIMIT, SPAM_WINDOW, SPAM_MUTE_MIN = 8, 6, 10
 WEBHOOK_EVERYONE_LIMIT, WEBHOOK_WINDOW = 2, 1
 XP_FILE = "xp_data.json"
 # ========================================================
@@ -90,6 +90,7 @@ role_deletes = defaultdict(list)
 mass_bans = defaultdict(list)
 msg_spam = defaultdict(list)
 webhook_hits = defaultdict(list)
+_xp_lock = asyncio.Lock()
 
 def load_xp():
     try:
@@ -99,14 +100,19 @@ def load_xp():
     except Exception:
         return {}
 
-def save_xp():
-    try:
-        with open(XP_FILE, "w", encoding="utf-8") as f:
-            json.dump({str(g): {str(u): v for u, v in users.items()} for g, users in xp_data.items()}, f)
-    except Exception as e:
-        print(f"xp save error: {e}")
-
 xp_data = load_xp()
+
+async def save_xp_async():
+    async with _xp_lock:
+        data = {str(g): {str(u): v for u, v in users.items()} for g, users in xp_data.items()}
+        try:
+            await asyncio.to_thread(_write_xp, data)
+        except Exception as e:
+            print(f"xp save error: {e}")
+
+def _write_xp(data):
+    with open(XP_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f)
 
 def is_owner(m):
     return m is not None and m.id == OWNER_ID
@@ -133,13 +139,8 @@ async def blog(guild, text, color=0xED4245):
         return
     emb = discord.Embed(description=text, color=color, timestamp=datetime.now(timezone.utc))
     emb.set_footer(text=f"Nexora Security • {guild.name}")
-    ch = bot.get_channel(cid)
-    if ch is None:
-        try:
-            ch = await bot.fetch_channel(cid)
-        except Exception:
-            return
     try:
+        ch = bot.get_channel(cid) or await bot.fetch_channel(cid)
         await ch.send(embed=emb)
     except Exception:
         pass
@@ -148,13 +149,8 @@ async def xp_log(guild, embed: discord.Embed):
     cid = XP_LOG.get(guild.id)
     if not cid:
         return
-    ch = bot.get_channel(cid)
-    if ch is None:
-        try:
-            ch = await bot.fetch_channel(cid)
-        except Exception:
-            return
     try:
+        ch = bot.get_channel(cid) or await bot.fetch_channel(cid)
         await ch.send(embed=embed)
     except Exception:
         pass
@@ -162,9 +158,9 @@ async def xp_log(guild, embed: discord.Embed):
 def get_xp(guild_id, user_id):
     return xp_data.get(guild_id, {}).get(user_id, 0)
 
-def set_xp(guild_id, user_id, value):
+async def set_xp(guild_id, user_id, value):
     xp_data.setdefault(guild_id, {})[user_id] = max(0, int(value))
-    save_xp()
+    await save_xp_async()
 
 def max_xp_allowed(member: discord.Member) -> int:
     if member.id == OWNER_ID:
@@ -188,7 +184,7 @@ async def perm_ban(guild, user_id, reason="PERM BAN list"):
 
 async def get_audit_member(guild, action, target_id):
     try:
-        async for e in guild.audit_logs(limit=6, action=action):
+        async for e in guild.audit_logs(limit=5, action=action):
             if e.target and e.target.id == target_id:
                 return guild.get_member(e.user.id)
     except Exception:
@@ -226,12 +222,12 @@ async def on_guild_remove(guild):
 @bot.event
 async def on_member_join(member):
     if member.id in PERM_BAN_IDS:
-        await perm_ban(member.guild, member.id, "PERM BAN list (join)")
+        await perm_ban(member.guild, member.id, "PERM BAN (join)")
         return
     if member.bot:
         adder = None
         try:
-            async for e in member.guild.audit_logs(limit=5, action=discord.AuditLogAction.bot_add):
+            async for e in member.guild.audit_logs(limit=4, action=discord.AuditLogAction.bot_add):
                 if e.target and e.target.id == member.id:
                     adder = member.guild.get_member(e.user.id)
                     break
@@ -252,7 +248,7 @@ async def on_member_join(member):
             if adder and adder.id not in (OWNER_ID, bot.user.id):
                 try:
                     await adder.ban(reason=f"added dangerous bot {member}", delete_message_seconds=0)
-                    await blog(member.guild, f"⛔ Banned {adder.mention} — added dangerous bot")
+                    await blog(member.guild, f"⛔ Banned {adder.mention} — dangerous bot")
                 except Exception as e:
                     await blog(member.guild, f"❌ Ban adder failed: {e}")
         return
@@ -276,8 +272,8 @@ async def on_member_join(member):
 @bot.event
 async def on_member_unban(guild, user):
     if user.id in PERM_BAN_IDS:
-        await asyncio.sleep(0.5)
-        await perm_ban(guild, user.id, "PERM BAN list (auto re-ban)")
+        await asyncio.sleep(0.4)
+        await perm_ban(guild, user.id, "PERM BAN (re-ban)")
 
 @bot.event
 async def on_guild_channel_delete(channel):
@@ -343,7 +339,7 @@ async def on_message(message):
     if message.guild is None:
         return await bot.process_commands(message)
 
-    # ----- webhooks only: everyone + mats / Ленвилль -----
+    # webhooks: raid only
     if message.webhook_id:
         content = message.content or ""
         content_l = content.lower()
@@ -378,7 +374,7 @@ async def on_message(message):
                     pass
             await blog(
                 message.guild,
-                f"💀 Webhook(s) removed in #{message.channel.name}\n"
+                f"💀 Webhook removed in #{message.channel.name}\n"
                 f"ping={has_ping} nsfw={has_nsfw} lenvill={has_len} mass={spam_everyone}",
             )
         return
@@ -394,7 +390,7 @@ async def on_message(message):
     text = message.content or ""
     low = text.lower()
 
-    # @everyone from users
+    # only @everyone / banned project names — chat, files, links, mats OK
     if message.mention_everyone or EVERYONE_RE.search(text):
         try:
             await message.delete()
@@ -402,15 +398,14 @@ async def on_message(message):
             pass
         try:
             await message.channel.send(
-                f"{message.author.mention}, вы нарушаете правила нашего проекта. Массовые пинги запрещены.",
-                delete_after=10,
+                f"{message.author.mention}, массовые пинги запрещены.",
+                delete_after=8,
             )
         except Exception:
             pass
         await blog(message.guild, f"📣 @everyone — {message.author.mention}")
         return
 
-    # competitor names only (not mats)
     if any(w in low for w in BANNED_WORDS):
         try:
             await message.delete()
@@ -418,26 +413,22 @@ async def on_message(message):
             pass
         try:
             emb = discord.Embed(
-                description="Ваше сообщение было удалено из‑за нарушения правил сервера.",
+                description="Сообщение удалено из‑за нарушения правил сервера.",
                 color=0xED4245,
             )
-            await message.channel.send(content=message.author.mention, embed=emb, delete_after=12)
+            await message.channel.send(content=message.author.mention, embed=emb, delete_after=10)
         except Exception:
             pass
         await blog(message.guild, f"🚫 Banned word — {message.author.mention}")
         return
 
-    # spam
+    # light spam (normal chat OK)
     now = time.time()
     uid = message.author.id
     msg_spam[uid] = [t for t in msg_spam[uid] if now - t < SPAM_WINDOW]
     msg_spam[uid].append(now)
     if len(msg_spam[uid]) >= SPAM_LIMIT:
         msg_spam[uid].clear()
-        try:
-            await message.channel.purge(limit=12, check=lambda m: m.author.id == uid)
-        except Exception:
-            pass
         try:
             await message.author.timeout(timedelta(minutes=SPAM_MUTE_MIN), reason="spam")
             await blog(message.guild, f"🔇 Spam mute {message.author.mention}")
@@ -456,7 +447,7 @@ class TicketModal(Modal, title="Подать жалобу"):
     async def on_submit(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
         if not ticket_roles_ok(interaction.guild):
-            return await interaction.followup.send("Tickets are disabled on this server.", ephemeral=True)
+            return await interaction.followup.send("Тикеты на этом сервере отключены.", ephemeral=True)
         try:
             g = interaction.guild
             overwrites = {
@@ -471,18 +462,19 @@ class TicketModal(Modal, title="Подать жалобу"):
                 name=f"ticket-{interaction.user.id}-{int(time.time())}",
                 overwrites=overwrites,
             )
-            emb = discord.Embed(title="Новая жалоба", color=0xED4245)
+            emb = discord.Embed(title="📩 Новая жалоба", color=0xED4245, timestamp=datetime.now(timezone.utc))
             emb.add_field(name="От кого", value=self.your_name.value, inline=False)
             emb.add_field(name="Нарушитель", value=self.target_name.value, inline=False)
             emb.add_field(name="Нарушение", value=self.reason.value, inline=False)
             emb.add_field(name="Доказательства", value=self.evidence.value, inline=False)
-            emb.add_field(name="Пользователь", value=interaction.user.mention, inline=False)
-            emb.add_field(name="Статус", value="Ожидает", inline=False)
+            emb.add_field(name="Discord", value=interaction.user.mention, inline=True)
+            emb.add_field(name="Статус", value="⏳ Ожидает", inline=True)
+            emb.set_footer(text=g.name)
             await ch.send(content=f"<@&{PING_ROLE_ID}>", embed=emb, view=TicketControlView())
-            await interaction.followup.send(f"Ticket created: {ch.mention}", ephemeral=True)
-            await blog(g, f"🎫 Ticket from {interaction.user.mention} → {ch.mention}", 0x57F287)
+            await interaction.followup.send(f"✅ Тикет создан: {ch.mention}", ephemeral=True)
+            await blog(g, f"🎫 Ticket {interaction.user.mention} → {ch.mention}", 0x57F287)
         except Exception as e:
-            await interaction.followup.send(f"Error: {e}", ephemeral=True)
+            await interaction.followup.send(f"Ошибка: {e}", ephemeral=True)
 
 class TicketControlView(View):
     def __init__(self):
@@ -491,31 +483,32 @@ class TicketControlView(View):
     @discord.ui.button(label="Взять", style=discord.ButtonStyle.primary, emoji="✋", custom_id="ticket_claim")
     async def claim(self, interaction: discord.Interaction, button: Button):
         if not is_staff(interaction.user):
-            return await interaction.response.send_message("No permission", ephemeral=True)
+            return await interaction.response.send_message("Нет прав", ephemeral=True)
+        await interaction.response.defer()
         emb = interaction.message.embeds[0]
         emb.color = 0xFEE75C
-        emb.title = "На рассмотрении"
+        emb.title = "✋ На рассмотрении"
         for i, f in enumerate(emb.fields):
             if f.name == "Статус":
-                emb.set_field_at(i, name="Статус", value=f"Взял: {interaction.user.mention}", inline=False)
+                emb.set_field_at(i, name="Статус", value=f"Взял: {interaction.user.mention}", inline=True)
                 break
         await interaction.message.edit(embed=emb)
-        await interaction.response.send_message(f"Claimed by {interaction.user.mention}")
+        await interaction.followup.send(f"Взял: {interaction.user.mention}")
         await blog(
             interaction.guild,
-            f"✋ Ticket claimed\nModerator: {interaction.user.mention}\nChannel: {interaction.channel.mention}",
+            f"✋ Claim\nMod: {interaction.user.mention}\n{interaction.channel.mention}",
             0xFEE75C,
         )
 
     @discord.ui.button(label="Принять", style=discord.ButtonStyle.success, emoji="✅", custom_id="ticket_accept")
     async def accept(self, interaction: discord.Interaction, button: Button):
         if not is_staff(interaction.user):
-            return await interaction.response.send_message("No permission", ephemeral=True)
+            return await interaction.response.send_message("Нет прав", ephemeral=True)
+        await interaction.response.defer()
         emb = interaction.message.embeds[0]
         emb.color = 0x57F287
-        emb.title = "Принято"
+        emb.title = "✅ Принято"
         await interaction.message.edit(embed=emb, view=None)
-        await interaction.response.send_message(f"Accepted by {interaction.user.mention}")
         log_emb = discord.Embed(title="✅ Ticket Accepted", color=0x57F287, timestamp=datetime.now(timezone.utc))
         log_emb.add_field(name="Moderator", value=interaction.user.mention, inline=True)
         log_emb.add_field(name="Channel", value=interaction.channel.mention, inline=True)
@@ -527,7 +520,8 @@ class TicketControlView(View):
                 await ch.send(embed=log_emb)
             except Exception:
                 pass
-        await asyncio.sleep(5)
+        await interaction.followup.send(f"Принято: {interaction.user.mention}")
+        await asyncio.sleep(4)
         try:
             await interaction.channel.delete()
         except Exception:
@@ -536,12 +530,12 @@ class TicketControlView(View):
     @discord.ui.button(label="Отклонить", style=discord.ButtonStyle.danger, emoji="❌", custom_id="ticket_reject")
     async def reject(self, interaction: discord.Interaction, button: Button):
         if not is_staff(interaction.user):
-            return await interaction.response.send_message("No permission", ephemeral=True)
+            return await interaction.response.send_message("Нет прав", ephemeral=True)
+        await interaction.response.defer()
         emb = interaction.message.embeds[0]
         emb.color = 0xED4245
-        emb.title = "Отклонено"
+        emb.title = "❌ Отклонено"
         await interaction.message.edit(embed=emb, view=None)
-        await interaction.response.send_message(f"Rejected by {interaction.user.mention}")
         log_emb = discord.Embed(title="❌ Ticket Rejected", color=0xED4245, timestamp=datetime.now(timezone.utc))
         log_emb.add_field(name="Moderator", value=interaction.user.mention, inline=True)
         log_emb.add_field(name="Channel", value=interaction.channel.mention, inline=True)
@@ -553,7 +547,8 @@ class TicketControlView(View):
                 await ch.send(embed=log_emb)
             except Exception:
                 pass
-        await asyncio.sleep(5)
+        await interaction.followup.send(f"Отклонено: {interaction.user.mention}")
+        await asyncio.sleep(4)
         try:
             await interaction.channel.delete()
         except Exception:
@@ -566,7 +561,7 @@ class TicketView(View):
     @discord.ui.button(label="Подать жалобу", style=discord.ButtonStyle.danger, emoji="📩", custom_id="ticket_open")
     async def complain(self, interaction: discord.Interaction, button: Button):
         if not ticket_roles_ok(interaction.guild):
-            return await interaction.response.send_message("Tickets disabled here.", ephemeral=True)
+            return await interaction.response.send_message("Тикеты здесь отключены.", ephemeral=True)
         await interaction.response.send_modal(TicketModal())
 
 @bot.command()
@@ -574,23 +569,23 @@ async def ticket(ctx):
     if ctx.author.id != OWNER_ID:
         return
     if not ticket_roles_ok(ctx.guild):
-        return await ctx.send("Required roles missing — tickets inactive.")
+        return await ctx.send("Нет нужных ролей — тикеты неактивны.")
     ch = bot.get_channel(TICKET_CHANNEL_ID)
     if ch is None:
-        return await ctx.send("Ticket channel not found")
+        return await ctx.send("Канал тикетов не найден")
     emb = discord.Embed(
         title="🎟️ Подача заявок",
         description=(
-            "⚠️ Если вы столкнулись с нарушением правил или вам нужна помощь администрации, "
-            "нажмите кнопку ниже и заполните форму заявки.\n\n"
-            "📋 Все обращения рассматриваются в порядке очереди.\n"
-            "❗ Используйте тикеты только по назначению."
+            "⚠️ Если вы столкнулись с нарушением правил или нужна помощь администрации — "
+            "нажмите кнопку ниже и заполните форму.\n\n"
+            "📋 Обращения рассматриваются в порядке очереди.\n"
+            "❗ Используйте тикеты только по делу."
         ),
         color=0x5865F2,
     )
     emb.set_footer(text="Nexora Studio • Система жалоб")
     await ch.send(embed=emb, view=TicketView())
-    await ctx.send("Panel sent")
+    await ctx.send("Панель отправлена")
 
 @bot.command()
 async def say(ctx, *, text):
@@ -626,14 +621,14 @@ def parse_xp_args(ctx, amount, args):
 async def givexp(ctx, amount: int = None, *args):
     try:
         if ctx.guild is None or ctx.guild.id not in XP_ENABLED:
-            return await ctx.send("XP system is not enabled on this server.")
+            return await ctx.send("XP is not enabled on this server.")
         if amount is None:
             return await ctx.send("Usage: `!givexp <amount> @user <reason>`")
         limit = max_xp_allowed(ctx.author)
         if limit <= 0:
-            return await ctx.send("You don't have permission to give XP.")
+            return await ctx.send("No permission to give XP.")
         if amount > limit:
-            return await ctx.send(f"Your role limit is **{limit:,} XP** per command.")
+            return await ctx.send(f"Your limit is **{limit:,} XP** per command.")
         members, reason, err = parse_xp_args(ctx, amount, args)
         if err:
             return await ctx.send(err)
@@ -642,13 +637,13 @@ async def givexp(ctx, amount: int = None, *args):
             if m.bot:
                 continue
             new = get_xp(ctx.guild.id, m.id) + amount
-            set_xp(ctx.guild.id, m.id, new)
+            await set_xp(ctx.guild.id, m.id, new)
             lines.append(f"{m.mention} → **{new:,} XP** (+{amount:,})")
         if not lines:
             return await ctx.send("No valid members.")
         emb = discord.Embed(title="💰 XP Granted", color=0x57F287, timestamp=datetime.now(timezone.utc))
         emb.add_field(name="Issuer", value=ctx.author.mention, inline=True)
-        emb.add_field(name="Amount", value=f"**+{amount:,}** XP", inline=True)
+        emb.add_field(name="Amount", value=f"**+{amount:,}**", inline=True)
         emb.add_field(name="Targets", value="\n".join(lines), inline=False)
         emb.add_field(name="Reason", value=reason, inline=False)
         emb.set_footer(text=ctx.guild.name)
@@ -661,14 +656,14 @@ async def givexp(ctx, amount: int = None, *args):
 async def takexp(ctx, amount: int = None, *args):
     try:
         if ctx.guild is None or ctx.guild.id not in XP_ENABLED:
-            return await ctx.send("XP system is not enabled on this server.")
+            return await ctx.send("XP is not enabled on this server.")
         if amount is None:
             return await ctx.send("Usage: `!takexp <amount> @user <reason>`")
         limit = max_xp_allowed(ctx.author)
         if limit <= 0:
-            return await ctx.send("You don't have permission to remove XP.")
+            return await ctx.send("No permission to remove XP.")
         if amount > limit:
-            return await ctx.send(f"Your role limit is **{limit:,} XP** per command.")
+            return await ctx.send(f"Your limit is **{limit:,} XP** per command.")
         members, reason, err = parse_xp_args(ctx, amount, args)
         if err:
             return await ctx.send(err)
@@ -677,13 +672,13 @@ async def takexp(ctx, amount: int = None, *args):
             if m.bot:
                 continue
             new = max(0, get_xp(ctx.guild.id, m.id) - amount)
-            set_xp(ctx.guild.id, m.id, new)
+            await set_xp(ctx.guild.id, m.id, new)
             lines.append(f"{m.mention} → **{new:,} XP** (-{amount:,})")
         if not lines:
             return await ctx.send("No valid members.")
         emb = discord.Embed(title="📉 XP Removed", color=0xED4245, timestamp=datetime.now(timezone.utc))
         emb.add_field(name="Issuer", value=ctx.author.mention, inline=True)
-        emb.add_field(name="Amount", value=f"**-{amount:,}** XP", inline=True)
+        emb.add_field(name="Amount", value=f"**-{amount:,}**", inline=True)
         emb.add_field(name="Targets", value="\n".join(lines), inline=False)
         emb.add_field(name="Reason", value=reason, inline=False)
         emb.set_footer(text=ctx.guild.name)
@@ -696,7 +691,7 @@ async def takexp(ctx, amount: int = None, *args):
 async def xp(ctx, member: discord.Member = None):
     try:
         if ctx.guild is None or ctx.guild.id not in XP_ENABLED:
-            return await ctx.send("XP system is not enabled on this server.")
+            return await ctx.send("XP is not enabled on this server.")
         member = member or ctx.author
         if member.bot:
             return await ctx.send("Bots don't have XP.")
